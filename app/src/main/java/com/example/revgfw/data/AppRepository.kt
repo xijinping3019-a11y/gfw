@@ -94,22 +94,21 @@ class AppRepository(private val context: Context) {
     private fun queryBackgroundBytes(pkg: String): Long {
         return runCatching {
             val nsm = context.getSystemService<NetworkStatsManager>() ?: return 0L
+            // 真实 uid（querySummaryForUid 需要 int uid，不是 hashCode）
+            val uid = runCatching { pm.getPackageUid(pkg, 0) }.getOrDefault(-1)
+            if (uid < 0) return 0L
             val end = System.currentTimeMillis()
             val start = end - 24 * 60 * 60 * 1000L
             var sum = 0L
-
-            // WiFi
-            runCatching {
-                val s = nsm.querySummaryForUid(
-                    ConnectivityManager.TYPE_WIFI, null, start, end, pkg.hashCode()
-                )
-                sum += readStats(s)
-            }
-            // 蜂窝
-            runCatching {
-                val s = nsm.querySummaryForUid(
-                    ConnectivityManager.TYPE_MOBILE, null, start, end, pkg.hashCode()
-                )
+            val types = intArrayOf(
+                ConnectivityManager.TYPE_WIFI,
+                ConnectivityManager.TYPE_MOBILE,
+            )
+            for (type in types) {
+                val s = runCatching {
+                    @Suppress("DEPRECATION")
+                    nsm.querySummaryForUid(type, null, start, end, uid)
+                }.getOrNull()
                 sum += readStats(s)
             }
             sum
@@ -122,7 +121,7 @@ class AppRepository(private val context: Context) {
         val bucket = NetworkStats.Bucket()
         while (stats.hasNextBucket()) {
             stats.getNextBucket(bucket)
-            // rx 是后台接收，tx 是后台发送（前台计数在字段名里带 foreground）
+            // rx 是接收，tx 是发送（后台流量计入此 bucket）
             total += bucket.rxBytes + bucket.txBytes
         }
         runCatching { stats.close() }
