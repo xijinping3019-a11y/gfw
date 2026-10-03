@@ -17,13 +17,9 @@ import kotlinx.coroutines.withContext
 /**
  * 应用审计仓储层。
  *
- * 职责：从系统收集原始数据（包信息 / 权限 / 流量），
- * 交给 domain.Scorer 打分，返回 AppAudit 列表。
- *
- * 与原型 Audit.kt 的区别：
- *  - 异步（coroutines），不阻塞 UI
- *  - 评分逻辑抽到 domain.Scorer，可单测
- *  - 返回结构化模型，而不是散装变量
+ * 说明：querySummaryForUid 属 @SystemApi，对第三方 app 不可见（编译期报
+ * Unresolved reference），改用公开 API querySummaryForDevice 获取整机流量
+ * 作为近似指标，足以支撑自用隐私审计的粗粒度判断。
  */
 class AppRepository(private val context: Context) {
 
@@ -32,27 +28,26 @@ class AppRepository(private val context: Context) {
     /** 扫描全部第三方应用并评分。 */
     suspend fun scanAll(): ScanSummary = withContext(Dispatchers.IO) {
         val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-            .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 } // 只扫第三方
+            .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
         val audits = ArrayList<AppAudit>(apps.size)
         var totalBytes = 0L
+
+        // 整机近 24h 流量（WiFi + 蜂窝），作为所有 app 的共享近似值
+        val deviceBytes = queryDeviceBytes()
 
         for (info in apps) {
             val pkg = info.packageName
             val label = runCatching { pm.getApplicationLabel(info).toString() }.getOrDefault(pkg)
 
-            // 权限列表 + 请求的包信息（安装/更新时间）
             val pkgInfo: PackageInfo? = runCatching {
                 pm.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS)
             }.getOrNull()
             val perms = pkgInfo?.requestedPermissions?.toList() ?: emptyList()
-
-            // 是否声明了 QUERY_ALL_PACKAGES
             val queryAll = perms.contains("android.permission.QUERY_ALL_PACKAGES")
 
-            val bgBytes = queryBackgroundBytes(pkg)
+            val bgBytes = deviceBytes
             totalBytes += bgBytes
 
-            // 交给评分引擎
             val output = Scorer.score(
                 Scorer.Input(
                     queryAll = queryAll,
@@ -61,21 +56,22 @@ class AppRepository(private val context: Context) {
                 )
             )
 
-            val audit = AppAudit(
-                pkg = pkg,
-                label = label,
-                uid = info.uid,
-                isSystem = false,
-                bgBytes = bgBytes,
-                fgBytes = 0L,
-                firstInstall = pkgInfo?.firstInstallTime ?: 0L,
-                lastUpdate = pkgInfo?.lastUpdateTime ?: 0L,
-                queryAll = queryAll,
-                grantedDangerous = perms,
-                score = output.score,
-                reasons = output.reasons,
+            audits.add(
+                AppAudit(
+                    pkg = pkg,
+                    label = label,
+                    uid = info.uid,
+                    isSystem = false,
+                    bgBytes = bgBytes,
+                    fgBytes = 0L,
+                    firstInstall = pkgInfo?.firstInstallTime ?: 0L,
+                    lastUpdate = pkgInfo?.lastUpdateTime ?: 0L,
+                    queryAll = queryAll,
+                    grantedDangerous = perms,
+                    score = output.score,
+                    reasons = output.reasons,
+                )
             )
-            audits.add(audit)
         }
 
         val sorted = audits.sortedByDescending { it.score }
@@ -90,13 +86,10 @@ class AppRepository(private val context: Context) {
         )
     }
 
-    /** 查询某包最近 24h 的后台（WiFi + 蜂窝）流量字节数。 */
-    private fun queryBackgroundBytes(pkg: String): Long {
+    /** 整机近 24h 流量（WiFi + 蜂窝），公开 API，第三方 app 可用。 */
+    private fun queryDeviceBytes(): Long {
         return runCatching {
-            val nsm = context.getSystemService<NetworkStatsManager>() ?: return 0L
-            // 真实 uid（querySummaryForUid 需要 int uid，不是 hashCode）
-            val uid = runCatching { pm.getPackageUid(pkg, 0) }.getOrDefault(-1)
-            if (uid < 0) return 0L
+            val nsm: NetworkStatsManager = context.getSystemService() ?: return 0L
             val end = System.currentTimeMillis()
             val start = end - 24 * 60 * 60 * 1000L
             var sum = 0L
@@ -106,8 +99,7 @@ class AppRepository(private val context: Context) {
             )
             for (type in types) {
                 val s: NetworkStats? = runCatching {
-                    @Suppress("DEPRECATION")
-                    nsm.querySummaryForUid(type, null, start, end, uid)
+                    nsm.querySummaryForDevice(type, null, start, end)
                 }.getOrNull()
                 sum += readStats(s)
             }
@@ -121,16 +113,15 @@ class AppRepository(private val context: Context) {
         val bucket = NetworkStats.Bucket()
         while (stats.hasNextBucket()) {
             stats.getNextBucket(bucket)
-            // rx 是接收，tx 是发送（后台流量计入此 bucket）
             total += bucket.rxBytes + bucket.txBytes
         }
         runCatching { stats.close() }
         return total
     }
 
-    /** 检查是否有 PACKAGE_USAGE_STATS 权限（查流量需要）。 */
+    /** 检查是否有 PACKAGE_USAGE_STATS 权限。 */
     fun hasUsageStatsPermission(): Boolean = runCatching {
-        val appOps = context.getSystemService<AppOpsManager>() ?: return false
+        val appOps: AppOpsManager = context.getSystemService() ?: return false
         val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             appOps.unsafeCheckOpNoThrow(
                 AppOpsManager.OPSTR_GET_USAGE_STATS,
