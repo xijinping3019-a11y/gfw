@@ -105,7 +105,7 @@ class AppRepository(private val context: Context) {
                 ConnectivityManager.TYPE_MOBILE,
             )
             for (type in types) {
-                val s = runCatching {
+                val s: NetworkStats? = runCatching {
                     @Suppress("DEPRECATION")
                     nsm.querySummaryForUid(type, null, start, end, uid)
                 }.getOrNull()
