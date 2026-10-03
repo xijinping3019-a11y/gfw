@@ -11,11 +11,12 @@ import rikka.shizuku.Shizuku
 object ShizukuExec {
 
     private const val TAG = "ShizukuExec"
+    private const val REQ_PERM = 4213
 
     /**
      * 命令执行结果。
-     * code: 退出码（-1 表示未执行/失败）
-     * ok: 便捷判断（code == 0）
+     * code: 退出码（-1 表示未执行/连接失败）
+     * ok:   code == 0
      */
     data class ExecResult(
         val code: Int,
@@ -23,7 +24,15 @@ object ShizukuExec {
         val stderr: String = ""
     ) {
         val ok: Boolean get() = code == 0
-        override fun toString(): String = if (ok) stdout else "[失败] $stderr"
+
+        /** UI 层用 r.pretty() 展示，兼顾成功/失败 */
+        fun pretty(): String = if (ok) {
+            if (stdout.isBlank()) "(无输出)" else stdout
+        } else {
+            "[失败 code=$code] " + (stderr.ifBlank { stdout.ifBlank { "(无输出)" } })
+        }
+
+        override fun toString(): String = pretty()
     }
 
     @Volatile
@@ -95,6 +104,36 @@ object ShizukuExec {
     fun uid(): Int {
         if (!ensureBound()) return -1
         return try { service!!.uid() } catch (e: Throwable) { -1 }
+    }
+
+    // ================== UI 层用到的辅助方法 ==================
+
+    /** Shizuku 是否已安装（Binder 是否可用） */
+    fun isInstalled(): Boolean = try {
+        Shizuku.pingBinder()
+    } catch (e: Throwable) {
+        false
+    }
+
+    /** Shizuku 是否已授权本应用 */
+    fun isAuthorized(): Boolean = try {
+        if (Shizuku.isPreV11()) false
+        else Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+    } catch (e: Throwable) {
+        false
+    }
+
+    /** 申请授权 */
+    fun requestPermission() {
+        try {
+            if (!Shizuku.isPreV11()) {
+                if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                    Shizuku.requestPermission(REQ_PERM)
+                }
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "requestPermission failed", e)
+        }
     }
 
     private fun safeVersion(): String = try {
