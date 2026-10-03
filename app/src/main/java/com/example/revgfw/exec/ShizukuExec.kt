@@ -1,138 +1,99 @@
 package com.example.revgfw.exec
 
-import android.content.pm.PackageManager
+import android.content.ComponentName
+import android.content.ServiceConnection
+import android.os.IBinder
+import android.util.Log
+import com.example.revgfw.IExecService
 import rikka.shizuku.Shizuku
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
- * Shizuku 执行层（修正版）。
- *
- * 关键修复：旧代码用反射调 Shizuku.newProcess(String[]) 找不到方法
- * （NoSuchMethodException: Shizuku.newProcess [class [Ljava.lang.String;]），
- * 导致所有命令都 code=-1。现改为按不同 Shizuku 版本逐一探测真实签名。
+ * 通过 Shizuku UserService（shell uid=2000）执行 shell 命令。
+ * 替代已被 Shizuku v13 移除的 Shizuku.newProcess。
  */
 object ShizukuExec {
 
-    data class ExecResult(
-        val code: Int,
-        val stdout: String,
-        val stderr: String,
-    ) {
-        val ok: Boolean get() = code == 0
-        fun pretty(): String = buildString {
-            if (stdout.isNotBlank()) append(stdout.trim())
-            if (stderr.isNotBlank()) {
-                if (isNotEmpty()) append('\n')
-                append("[stderr] ").append(stderr.trim())
-            }
-            if (isEmpty()) append("(无输出)")
-        }
-    }
+    private const val TAG = "ShizukuExec"
+    private const val TAG_SERVICE = "revgfw_exec_service"
 
-    fun isInstalled(): Boolean = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
+    @Volatile
+    private var service: IExecService? = null
 
-    fun isAuthorized(): Boolean = runCatching {
-        if (!Shizuku.pingBinder()) return false
-        Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-    }.getOrDefault(false)
+    private var bound = false
+    private val lock = Object()
 
-    fun requestPermission(requestCode: Int = 1001) {
-        runCatching {
-            if (Shizuku.isPreV11()) return
-            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-                Shizuku.requestPermission(requestCode)
-            }
-        }
-    }
-
-    fun run(command: String, timeoutMs: Long = 15_000L): ExecResult {
-        if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
-            return ExecResult(-1, "", "Shizuku 未运行或未授权")
-        }
-        var process: Process? = null
-        return try {
-            val cmd = arrayOf("sh", "-c", command)
-            process = newProcess(cmd)
-
-            val outReader = BufferedReader(InputStreamReader(process.inputStream))
-            val errReader = BufferedReader(InputStreamReader(process.errorStream))
-            val stdout = StringBuilder()
-            val stderr = StringBuilder()
-
-            val tOut = Thread { outReader.forEachLine { stdout.append(it).append('\n') } }
-            val tErr = Thread { errReader.forEachLine { stderr.append(it).append('\n') } }
-            tOut.start(); tErr.start()
-
-            val finished = waitFor(process, timeoutMs)
-            if (!finished) {
-                process.destroy()
-                stderr.append("\n[超时 ${timeoutMs}ms，已终止]")
-            }
-            tOut.join(500); tErr.join(500)
-
-            val code = runCatching { process.exitValue() }.getOrDefault(-1)
-            ExecResult(code, stdout.toString(), stderr.toString())
-        } catch (t: Throwable) {
-            ExecResult(-1, "", t.message ?: "执行异常")
-        } finally {
-            runCatching { process?.destroy() }
-        }
-    }
-
-    private fun waitFor(p: Process, timeoutMs: Long): Boolean {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            if (!p.isAlive) return true
-            Thread.sleep(50)
-        }
-        return !p.isAlive
-    }
-
-    /**
-     * 兼容 Shizuku 各版本的 newProcess 签名。
-     * 依次尝试：
-     *   1) newProcess(String[] cmd, String[] env, String dir)   ← 新版标准
-     *   2) newProcess(String[] cmd)                             ← 旧版
-     * 失败则抛出带版本号的明确异常。
-     */
-    private fun newProcess(cmd: Array<String>): Process {
-        val errors = StringBuilder()
-
-        // 尝试 1：三参数
-        runCatching {
-            val m = Shizuku::class.java.getMethod(
-                "newProcess",
-                Array<String>::class.java,
-                Array<String>::class.java,
-                String::class.java
-            )
-            m.isAccessible = true
-            return m.invoke(null, cmd, null, null) as Process
-        }.onFailure { errors.append("3-arg: ").append(it.message).append('\n') }
-
-        // 尝试 2：单参数
-        runCatching {
-            val m = Shizuku::class.java.getMethod("newProcess", Array<String>::class.java)
-            m.isAccessible = true
-            return m.invoke(null, cmd) as Process
-        }.onFailure { errors.append("1-arg: ").append(it.message).append('\n') }
-
-        // 尝试 3：newProcess(String[] cmd, String[] env, String[] dir) 变体兜底
-        runCatching {
-            val m = Shizuku::class.java.getMethod(
-                "newProcess",
-                Array<String>::class.java,
-                Array<String>::class.java,
-                Array<String>::class.java
-            )
-            m.isAccessible = true
-            return m.invoke(null, cmd, null, null) as Process
-        }.onFailure { errors.append("3-arg-arr: ").append(it.message).append('\n') }
-
-        val ver = runCatching { Shizuku::class.java.getMethod("getVersion").invoke(null) }.getOrNull()
-        throw IllegalStateException(
-            "Shizuku.newProcess 不可用（版本 $ver）。已尝试所有签名：\n$errors"
+    private val userServiceArgs: Shizuku.UserServiceArgs
+        get() = Shizuku.UserServiceArgs(
+            ComponentName("com.example.revgfw", ExecUserService::class.java.name)
         )
+            .daemon(false)
+            .processNameSuffix("exec")
+            .debuggable(false)
+            .version(1)
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            Log.i(TAG, "onServiceConnected")
+            service = IExecService.Stub.asInterface(binder)
+            synchronized(lock) { lock.notifyAll() }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            Log.i(TAG, "onServiceDisconnected")
+            service = null
+            bound = false
+        }
+    }
+
+    private fun ensureBound(): Boolean {
+        val s = service
+        if (s != null && s.asBinder().pingBinder()) return true
+
+        if (Shizuku.isPreV11()) return false
+        if (Shizuku.checkSelfPermission() != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            return false
+        }
+        if (!Shizuku.pingBinder()) return false
+
+        synchronized(lock) {
+            try {
+                Shizuku.bindUserService(userServiceArgs, connection)
+                bound = true
+                lock.wait(8000)
+            } catch (e: Throwable) {
+                Log.e(TAG, "bindUserService failed", e)
+                return false
+            }
+        }
+        return service != null
+    }
+
+    /** 执行命令，返回输出文本。失败返回带 [错误] 前缀的说明。 */
+    fun run(cmd: String): String {
+        if (!ensureBound()) {
+            return "[错误] 无法连接 Shizuku UserService。请确认：\n" +
+                    "1) Shizuku 服务正在运行\n" +
+                    "2) 已授权本应用\n" +
+                    "3) Shizuku 版本 >= 13（本机检测: ${safeVersion()}）"
+        }
+        return try {
+            service!!.exec(cmd)
+        } catch (e: Throwable) {
+            "[错误] 执行异常: ${e.message}"
+        }
+    }
+
+    /** 返回 uid（验证用），失败返回 -1 */
+    fun uid(): Int {
+        if (!ensureBound()) return -1
+        return try { service!!.uid } catch (e: Throwable) { -1 }
+    }
+
+    private fun safeVersion(): String = try {
+        Shizuku.getVersion().toString()
+    } catch (e: Throwable) {
+        "unknown"
     }
 }
