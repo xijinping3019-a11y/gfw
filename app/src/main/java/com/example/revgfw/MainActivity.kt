@@ -39,7 +39,7 @@ import com.example.revgfw.ui.screens.MonitorScreen
 import com.example.revgfw.ui.screens.ReportScreen
 import com.example.revgfw.ui.screens.ScanScreen
 import com.example.revgfw.ui.screens.SettingsScreen
-import com.example.revgfw.ui.theme.ReverseGFWTheme
+import com.example.revgfw.ui.theme.RevGfwTheme
 
 class MainActivity : ComponentActivity() {
 
@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            ReverseGFWTheme {
+            RevGfwTheme {
                 AppRoot(vm)
             }
         }

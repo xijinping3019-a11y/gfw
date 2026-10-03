@@ -17,10 +17,15 @@ enum class Risk(val label: String) {
 
 /** 单条风险原因（可解释评分） */
 data class Reason(
-    val text: String,
+    val title: String,
     val weight: Int,
     val category: Category,
-)
+) {
+    /** 兼容旧字段名 text */
+    val text: String get() = title
+    /** 详情描述（当前与标题一致，便于 UI 展示） */
+    val detail: String get() = title
+}
 
 enum class Category(val label: String) {
     PERMISSION("权限"),
@@ -59,4 +64,5 @@ data class ScanSummary(
     val low: Int,
     val totalBytes: Long,
     val timestamp: Long,
+    val apps: List<AppAudit> = emptyList(),
 )

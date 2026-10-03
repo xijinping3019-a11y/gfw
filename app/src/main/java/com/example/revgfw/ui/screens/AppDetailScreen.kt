@@ -75,14 +75,14 @@ fun AppDetailScreen(vm: MainViewModel, onBack: () -> Unit) {
         ) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(a.appLabel, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(a.packageName, style = MaterialTheme.typography.bodySmall)
+                    Text(a.label, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(a.pkg, style = MaterialTheme.typography.bodySmall)
                     Text(
                         "风险评分：${a.score} / 100（${a.risk.label}）",
                         color = a.risk.color(),
                         fontWeight = FontWeight.Bold,
                     )
-                    Text("后台流量(24h)：${formatBytes(a.backgroundBytes24h)}")
+                    Text("后台流量(24h)：${formatBytes(a.bgBytes)}")
                 }
             }
 
@@ -102,19 +102,19 @@ fun AppDetailScreen(vm: MainViewModel, onBack: () -> Unit) {
 
             Text("操作", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { exec("断网") { Actions.blockNetwork(a.packageName) } }) { Text("断网") }
-                OutlinedButton(onClick = { exec("恢复联网") { Actions.unblockNetwork(a.packageName) } }) { Text("恢复联网") }
+                Button(onClick = { exec("断网") { Actions.blockNetwork(a.pkg) } }) { Text("断网") }
+                OutlinedButton(onClick = { exec("恢复联网") { Actions.unblockNetwork(a.pkg) } }) { Text("恢复联网") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { exec("限制后台") { Actions.restrictBackground(a.packageName) } }) { Text("限制后台") }
-                OutlinedButton(onClick = { exec("解除限制") { Actions.unrestrictBackground(a.packageName) } }) { Text("解除限制") }
+                Button(onClick = { exec("限制后台") { Actions.restrictBackground(a.pkg) } }) { Text("限制后台") }
+                OutlinedButton(onClick = { exec("解除限制") { Actions.unrestrictBackground(a.pkg) } }) { Text("解除限制") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { exec("冻结") { Actions.freeze(a.packageName) } }) { Text("冻结") }
-                OutlinedButton(onClick = { exec("解冻") { Actions.unfreeze(a.packageName) } }) { Text("解冻") }
+                Button(onClick = { exec("冻结") { Actions.freeze(a.pkg) } }) { Text("冻结") }
+                OutlinedButton(onClick = { exec("解冻") { Actions.unfreeze(a.pkg) } }) { Text("解冻") }
             }
             OutlinedButton(
-                onClick = { exec("强制停止") { Actions.forceStop(a.packageName) } },
+                onClick = { exec("强制停止") { Actions.forceStop(a.pkg) } },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("强制停止") }
 

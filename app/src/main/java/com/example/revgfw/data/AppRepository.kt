@@ -5,6 +5,7 @@ import android.app.usage.NetworkStats
 import android.app.usage.NetworkStatsManager
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.os.Build
@@ -37,31 +38,55 @@ class AppRepository(private val context: Context) {
 
         for (info in apps) {
             val pkg = info.packageName
-            val perms = runCatching {
-                pm.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS).requestedPermissions?.toList() ?: emptyList()
-            }.getOrDefault(emptyList())
+            val label = runCatching { pm.getApplicationLabel(info).toString() }.getOrDefault(pkg)
+
+            // 权限列表 + 请求的包信息（安装/更新时间）
+            val pkgInfo: PackageInfo? = runCatching {
+                pm.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS)
+            }.getOrNull()
+            val perms = pkgInfo?.requestedPermissions?.toList() ?: emptyList()
+
+            // 是否声明了 QUERY_ALL_PACKAGES
+            val queryAll = perms.contains("android.permission.QUERY_ALL_PACKAGES")
 
             val bgBytes = queryBackgroundBytes(pkg)
             totalBytes += bgBytes
 
-            val audit = Scorer.score(
-                packageName = pkg,
-                appLabel = runCatching { pm.getApplicationLabel(info).toString() }.getOrDefault(pkg),
-                requestedPermissions = perms,
-                backgroundBytes24h = bgBytes,
+            // 交给评分引擎
+            val output = Scorer.score(
+                Scorer.Input(
+                    queryAll = queryAll,
+                    grantedDangerous = perms,
+                    bgMb = bgBytes / 1048576.0,
+                )
+            )
+
+            val audit = AppAudit(
+                pkg = pkg,
+                label = label,
+                uid = info.uid,
                 isSystem = false,
+                bgBytes = bgBytes,
+                fgBytes = 0L,
+                firstInstall = pkgInfo?.firstInstallTime ?: 0L,
+                lastUpdate = pkgInfo?.lastUpdateTime ?: 0L,
+                queryAll = queryAll,
+                grantedDangerous = perms,
+                score = output.score,
+                reasons = output.reasons,
             )
             audits.add(audit)
         }
 
         val sorted = audits.sortedByDescending { it.score }
         ScanSummary(
-            apps = sorted,
-            highRiskCount = sorted.count { it.risk == Risk.HIGH },
-            mediumRiskCount = sorted.count { it.risk == Risk.MEDIUM },
-            lowRiskCount = sorted.count { it.risk == Risk.LOW },
+            total = sorted.size,
+            high = sorted.count { it.risk == Risk.HIGH },
+            medium = sorted.count { it.risk == Risk.MEDIUM },
+            low = sorted.count { it.risk == Risk.LOW },
             totalBytes = totalBytes,
             timestamp = System.currentTimeMillis(),
+            apps = sorted,
         )
     }
 

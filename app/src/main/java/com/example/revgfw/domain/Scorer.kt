@@ -22,7 +22,7 @@ object Scorer {
         if (input.queryAll) {
             total += Rules.QUERY_ALL_WEIGHT
             reasons += Reason(
-                text = "可枚举设备上全部应用（QUERY_ALL_PACKAGES）",
+                title = "可枚举设备上全部应用（QUERY_ALL_PACKAGES）",
                 weight = Rules.QUERY_ALL_WEIGHT,
                 category = Category.ENUMERATION,
             )
@@ -34,7 +34,7 @@ object Scorer {
             val (w, cat) = Rules.sensitiveWeight(perm) ?: return@forEach
             permScore += w
             reasons += Reason(
-                text = "已授予敏感权限：${prettyPerm(perm)}",
+                title = "已授予敏感权限：${prettyPerm(perm)}",
                 weight = w,
                 category = cat,
             )
@@ -47,7 +47,7 @@ object Scorer {
         if (bgW > 0) {
             total += bgW
             reasons += Reason(
-                text = "24 小时后台流量 %.1f MB".format(input.bgMb),
+                title = "24 小时后台流量 %.1f MB".format(input.bgMb),
                 weight = bgW,
                 category = Category.TRAFFIC,
             )

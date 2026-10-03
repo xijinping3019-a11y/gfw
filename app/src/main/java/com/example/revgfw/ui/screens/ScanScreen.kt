@@ -81,8 +81,8 @@ fun ScanScreen(vm: MainViewModel, onOpenDetail: () -> Unit) {
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    item { SummaryCard(s.highRiskCount, s.mediumRiskCount, s.lowRiskCount, s.apps.size) }
-                    items(s.apps, key = { it.packageName }) { app ->
+                    item { SummaryCard(s.high, s.medium, s.low, s.apps.size) }
+                    items(s.apps, key = { it.pkg }) { app ->
                         AppRow(app) {
                             vm.select(app)
                             onOpenDetail()
@@ -122,9 +122,9 @@ private fun AppRow(app: AppAudit, onClick: () -> Unit) {
                 Modifier.size(10.dp).clip(CircleShape).background(app.risk.color()),
             )
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                Text(app.appLabel, fontWeight = FontWeight.SemiBold)
+                Text(app.label, fontWeight = FontWeight.SemiBold)
                 Text(
-                    app.packageName,
+                    app.pkg,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

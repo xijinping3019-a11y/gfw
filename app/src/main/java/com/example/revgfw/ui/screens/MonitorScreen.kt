@@ -66,11 +66,11 @@ fun MonitorScreen(vm: MainViewModel) {
             if (watch.isEmpty()) {
                 item { Text("一切正常，没有需要关注的应用 👍") }
             } else {
-                items(watch, key = { it.packageName }) { app ->
+                items(watch, key = { it.pkg }) { app ->
                     Card(Modifier.fillMaxWidth()) {
                         Row(Modifier.padding(14.dp)) {
                             Column(Modifier.weight(1f)) {
-                                Text(app.appLabel, fontWeight = FontWeight.SemiBold)
+                                Text(app.label, fontWeight = FontWeight.SemiBold)
                                 Text(
                                     app.reasons.firstOrNull()?.title ?: "—",
                                     style = MaterialTheme.typography.bodySmall,

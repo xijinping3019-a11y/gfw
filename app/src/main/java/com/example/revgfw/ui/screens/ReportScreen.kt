@@ -40,8 +40,8 @@ fun ReportScreen(vm: MainViewModel) {
             return@Scaffold
         }
 
-        val text = buildReport(s.timestamp, s.highRiskCount, s.mediumRiskCount, s.lowRiskCount, s.totalBytes,
-            s.apps.take(20).map { Triple(it.appLabel, it.packageName, it.score) })
+        val text = buildReport(s.timestamp, s.high, s.medium, s.low, s.totalBytes,
+            s.apps.take(20).map { Triple(it.label, it.pkg, it.score) })
 
         Column(
             Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState()).padding(16.dp),
