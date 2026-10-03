@@ -24,12 +24,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.example.revgfw.exec.ShizukuExec
 import com.example.revgfw.ui.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(vm: MainViewModel) {
+    val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val authorized = ShizukuExec.isAuthorized()
     val installed = ShizukuExec.isInstalled()
@@ -53,8 +58,10 @@ fun SettingsScreen(vm: MainViewModel) {
                     ) { Text("申请 / 重新授权") }
                     OutlinedButton(
                         onClick = {
-                            val r = ShizukuExec.run("id")
-                            vm.notify("测试执行：${r.pretty()}")
+                            scope.launch {
+                                val r = withContext(Dispatchers.IO) { ShizukuExec.run("id") }
+                                vm.notify("测试执行：${r.pretty()}")
+                            }
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("测试执行（id）") }
